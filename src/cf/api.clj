@@ -77,5 +77,35 @@
                 {:keys [access_token refresh_token]} (e<! (token token_endpoint username password))]
             (Client. url access_token refresh_token)))
     ret-ch))
-  
-#_(println (async/<!! (make-client "https://api.us-east.cf.yaas.io/" "x" "y")))
+
+(defn- http-get-page [{:keys [access_token] :as client} url page page-size]
+  (let [ret-ch (chan)]
+    (http/get url (assoc http-options
+                         :headers {"AUTHORIZATION" (str "Bearer " access_token)}
+                         :query-params {:order-direction "asc" :page page :results-per-page page-size})
+              (make-http-response-fn url ret-ch))
+    ret-ch))
+
+(defn- http-get-all-pages [{:keys [access_token] :as client} url page-size]
+  (let [ret-ch (chan)]
+    (step "Fetching Spaces" ret-ch
+          (let [{:keys [total_results]} (e<! (http-get-page client url 1 1))
+                total-pages (Math/ceil (/ total_results page-size))]
+            (for [page (range 1 (inc total-pages))]
+              (http-get-page client url page page-size))))
+    ret-ch))
+
+(defn spaces [{:keys [url] :as client}]
+  (http-get-all-pages client (str url "/v2/spaces") 1))
+
+(def client (async/<!! (make-client "https://api.us-east.cf.yaas.io/" "x" "y")))
+
+(->>
+  (spaces client)
+  (async/<!!)
+  (async/merge)
+  (async/into [])
+  (async/<!!)
+  (map :next_url)
+  (count)
+  println)
